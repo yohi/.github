@@ -228,7 +228,6 @@ jobs:
             } catch (error) {
               core.setFailed(`Action failed: ${error.message}`);
             }
-          };
 ```
 
 ---
