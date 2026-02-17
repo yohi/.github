@@ -98,6 +98,10 @@ fi
 # 2. Static Analysis & Formatting
 echo "✨ Running Lint-staged..."
 npx lint-staged
+if [ $? -ne 0 ]; then
+    echo "❌ Lint-staged failed! Please fix the errors and try again."
+    exit 1
+fi
 ```
 
 ### B. Phase 1: CodeRabbit (Strict Mode)
@@ -140,7 +144,7 @@ reviews:
 
     # 📝 出力形式
     - 指摘は簡潔な日本語で箇条書きにしてください。
-    - 修正案は `diff` ではなく、コピー可能なコードブロックで提示してください。
+    - 修正案は可能な限りコピー可能なコードブロックを推奨しますが、CodeRabbitは内部的にdiff形式で出力する場合があります。（実際の出力は環境やバージョンによって異なるため動作確認を行ってください）
 
 chat:
   auto_reply: false  # Liteプランのためチャット無効化
@@ -224,6 +228,7 @@ jobs:
             } catch (error) {
               core.setFailed(`Action failed: ${error.message}`);
             }
+          };
 ```
 
 ---
@@ -246,10 +251,10 @@ jobs:
 
 * CodeRabbitの指摘が解消された状態で、自身の変更内容を見直します。
 * **以下のいずれかに該当するか？**
-* [ ] 認証・認可に関わる変更
-* [ ] データベーススキーマの変更 (マイグレーション)
-* [ ] 決済ロジックの変更
-* [ ] 複雑なコアロジックの大幅な書き換え
+* - 認証・認可に関わる変更
+* - データベーススキーマの変更 (マイグレーション)
+* - 決済ロジックの変更
+* - 複雑なコアロジックの大幅な書き換え
 
 * **NO:** そのままマージ（Squash Merge推奨）。
 * **YES:** Step 4へ。
