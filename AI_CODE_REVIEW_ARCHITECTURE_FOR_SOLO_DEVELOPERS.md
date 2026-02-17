@@ -143,8 +143,9 @@ reviews:
     4. **セキュリティ**: XSS、Injection、不適切な権限管理（Phase 0漏れの最終防衛）
 
     # 📝 出力形式
+    # ※CodeRabbitは内部的にdiff形式で出力する場合があります。（実際の出力は環境やバージョンによって異なるため動作確認を行ってください）
     - 指摘は簡潔な日本語で箇条書きにしてください。
-    - 修正案は可能な限りコピー可能なコードブロックを推奨しますが、CodeRabbitは内部的にdiff形式で出力する場合があります。（実際の出力は環境やバージョンによって異なるため動作確認を行ってください）
+    - 修正案は可能な限りコピー可能なコードブロックを推奨します。
 
 chat:
   auto_reply: false  # Liteプランのためチャット無効化
@@ -159,20 +160,10 @@ OSS無料枠の制限とレスポンス時間を考慮し、コンテキスト�
 ```json
 {
     "skipReview": "AUTOMATIC",
-    "commentTypes": ["logic", "security", "performance", "design"],
-    "strictness": 4,
+    "commentTypes": ["logic", "syntax", "style", "info"],
+    "strictness": 3,
     "triggerOnUpdates": false,
-    "ignorePatterns": [
-        "**/package-lock.json",
-        "**/yarn.lock",
-        "**/pnpm-lock.yaml",
-        "**/dist/**",
-        "**/*.min.js",
-        "**/public/assets/**",
-        "**/test/fixtures/**",
-        "**/__mocks__/**",
-        "**/*.md"
-    ]
+    "ignorePatterns": "**/package-lock.json\n**/yarn.lock\n**/pnpm-lock.yaml\n**/dist/**\n**/*.min.js\n**/public/assets/**\n**/test/fixtures/**\n**/__mocks__/**\n**/*.md"
 }
 ```
 
@@ -199,7 +190,18 @@ jobs:
       - name: Trigger Greptile and Reset Label
         uses: actions/github-script@v7
         with:
-          # Note: Must use a Fine-grained PAT, not GITHUB_TOKEN
+          # Note: Must use a Fine-grained PAT, not GITHUB_TOKEN.
+          # GITHUB_TOKEN is insufficient because actions performed by it do not trigger subsequent workflows
+          # (e.g., recursive triggers).
+          # Required Fine-grained PAT scopes:
+          # - Repository access: Only select repositories (or All)
+          # - Permissions:
+          #   - Contents: Read (to read repo info)
+          #   - Pull requests: Read and Write (to add comments)
+          #   - Metadata: Read (mandatory)
+          # Secure Handling:
+          # - Store the PAT in GitHub Actions Secrets (e.g., PAT_FOR_TRIGGER).
+          # - Never hardcode the PAT in the workflow file.
           github-token: ${{ secrets.PAT_FOR_TRIGGER }}
           script: |
             const prNumber = context.payload.pull_request.number;
