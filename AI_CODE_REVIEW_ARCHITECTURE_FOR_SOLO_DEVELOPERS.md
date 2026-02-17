@@ -51,7 +51,7 @@ graph TD
 ## 3. リポジトリ構成 (Repository Structure)
 
 ```text
-[github.com/](https://github.com/)<username>/
+[github.com/username/](https://github.com/username/)
 ├── .github/                        # [Central Repo] 設定集約用
 │   └── .github/
 │       └── coderabbit.yaml         # CodeRabbit共通設定（厳格モード）
@@ -271,4 +271,4 @@ jobs:
 
 * **Greptileが反応しない:** OSS枠はリクエスト過多で遅延することがあります。急ぎの場合は手動でPRに `@greptileai review` とコメントしてください。
 * **CodeRabbitがうるさい:** `coderabbit.yaml` の `strictness` を調整するか、プロンプトで無視する項目を追加してください。
-* **Gitleaks of 誤検知:** 本当に公開して良いトークン（テスト用など）の場合は、行末に `# gitleaks:allow` を追加して回避します。
+* **Gitleaksの誤検知:** 本当に公開して良いトークン（テスト用など）の場合は、行末に `# gitleaks:allow` を追加して回避します。
