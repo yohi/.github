@@ -1,0 +1,85 @@
+name: OpenCodeReview
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ocr-review:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/open-code-review') ||
+        startsWith(github.event.comment.body, '@open-code-review')))
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install OpenCodeReview
+        run: npm install -g @alibaba-group/open-code-review@latest
+
+      - name: Configure OCR
+        run: |
+          ocr config set llm.url "${{ secrets.OCR_LLM_URL }}"
+          ocr config set llm.auth_token "${{ secrets.OCR_LLM_AUTH_TOKEN }}"
+          ocr config set llm.model "${{ secrets.OCR_LLM_MODEL }}"
+          ocr config set llm.use_anthropic "${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}"
+          ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
+
+      - name: Run OCR review
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            PR_DATA=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")
+            BASE_REF=$(echo "${PR_DATA}" | jq -r '.base.ref')
+            HEAD_REF=$(echo "${PR_DATA}" | jq -r '.head.ref')
+            PR_TITLE=$(echo "${PR_DATA}" | jq -r '.title')
+          fi
+
+          ocr review \
+            --background "PR: ${PR_TITLE}" \
+            --from "origin/${BASE_REF}" \
+            --to "origin/${HEAD_REF}" \
+            --format json \
+            --audience agent \
+            --concurrency 5 \
+            > /tmp/ocr-result.json 2> /tmp/ocr-stderr.log
+
+      - name: Post review comments
+        if: always()
+        run: |
+          node .github/workflows/scripts/post-ocr-comments.js \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number || github.event.issue.number }}" \
+            --result "/tmp/ocr-result.json"
+
+      - name: Upload result artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-debug-logs
+          path: |
+            /tmp/ocr-result.json
+            /tmp/ocr-stderr.log
+          if-no-files-found: ignore
