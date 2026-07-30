@@ -199,7 +199,7 @@ function findDiffPosition(comment, filesMap) {
       if (match) {
         const startLine = parseInt(match[1]);
         const count = match[2] ? parseInt(match[2]) : 1;
-        const endLine = startLine + count;
+        const endLine = count > 0 ? startLine + count - 1 : startLine;
         if (comment.line >= startLine && comment.line <= endLine) {
           position = { line: comment.line, side: 'RIGHT' };
           break;
