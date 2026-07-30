@@ -52,7 +52,7 @@ jobs:
       OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
 ```
 
-サンプルファイル: [`.github/workflows/caller-example.yml`](./.github/workflows/caller-example.yml)
+サンプルファイル: [`.github/workflows/caller-example.yml`](../.github/workflows/caller-example.yml)
 
 ### 呼び出し側の Secrets 設定
 
@@ -185,7 +185,10 @@ jobs:
 
 #### ワークフローにトークン生成ステップを追加
 
-`.github/workflows/ocr-review.yml` の最初に以下のステップを追加してください。
+本構成では呼び出し側 (caller workflow) は `uses:` で再利用ワークフローを呼び出すため、呼び出し側には `steps` を追加しません。GitHub App トークン生成と `secrets.GITHUB_TOKEN` の置換手順は、`steps` を定義している再利用ワークフロー (`.github/workflows/ocr-review.yml`) 側に配置してください。
+
+##### 再利用ワークフロー (`.github/workflows/ocr-review.yml`) への設定
+ジョブの最初に以下のステップを追加します。
 
 ```yaml
     steps:
@@ -200,7 +203,10 @@ jobs:
           permission-contents: read
 ```
 
-その後、`secrets.GITHUB_TOKEN` の使用箇所を `${{ steps.app-token.outputs.token }}` に置き換えてください。
+その後、`ocr-review.yml` 内の `secrets.GITHUB_TOKEN` の使用箇所を `${{ steps.app-token.outputs.token }}` に置き換えてください。
+
+##### 呼び出し側ワークフロー
+呼び出し側ワークフローでは `steps` を追加せず、再利用ワークフロー呼び出し時に必要な App 情報 Secrets を渡すように設定します。
 
 ### カスタムレビュールール
 

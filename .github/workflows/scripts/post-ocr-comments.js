@@ -39,7 +39,36 @@ if (!fs.existsSync(resultPath)) {
   process.exit(1);
 }
 
-const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+let result;
+try {
+  result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+} catch (err) {
+  console.error(`Failed to parse result JSON file: ${err.message}`);
+  process.exit(1);
+}
+
+if (!result || typeof result !== 'object') {
+  console.error('Invalid result format: expected an object');
+  process.exit(1);
+}
+
+if (!Array.isArray(result.comments)) {
+  console.error('Invalid result format: "comments" property must be an array');
+  process.exit(1);
+}
+
+for (const comment of result.comments) {
+  if (
+    !comment ||
+    typeof comment !== 'object' ||
+    typeof comment.path !== 'string' ||
+    typeof comment.line !== 'number' ||
+    typeof comment.body !== 'string'
+  ) {
+    console.error('Invalid comment element in result:', JSON.stringify(comment));
+    process.exit(1);
+  }
+}
 
 // GitHub API helper
 function githubApi(method, path, body = null) {
@@ -54,6 +83,7 @@ function githubApi(method, path, body = null) {
         'User-Agent': 'OpenCodeReview-CI',
         'Content-Type': 'application/json',
       },
+      timeout: 30000,
     };
 
     const req = https.request(options, (res) => {
@@ -68,14 +98,36 @@ function githubApi(method, path, body = null) {
       });
     });
 
+    req.on('timeout', () => {
+      req.destroy(new Error('GitHub API request timed out'));
+    });
+
     req.on('error', reject);
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
 }
 
+async function fetchAllPrFiles() {
+  const filesMap = new Map();
+  let page = 1;
+  while (true) {
+    const res = await githubApi('GET', `/pulls/${prNumber}/files?per_page=100&page=${page}`);
+    if (res.status !== 200 || !Array.isArray(res.data)) {
+      console.error(`Failed to fetch PR files (page ${page})`);
+      return null;
+    }
+    for (const file of res.data) {
+      filesMap.set(file.filename, file);
+    }
+    if (res.data.length < 100) break;
+    page++;
+  }
+  return filesMap;
+}
+
 async function postReviewComments() {
-  const comments = result.comments || [];
+  const comments = result.comments;
 
   if (comments.length === 0) {
     console.log('No comments to post');
@@ -91,10 +143,16 @@ async function postReviewComments() {
 
   const headSha = prData.data.head.sha;
 
+  // Fetch all PR files to build a lookup map
+  const filesMap = await fetchAllPrFiles();
+  if (!filesMap) {
+    process.exit(1);
+  }
+
   // Calculate position in diff for each comment
   const reviewComments = [];
   for (const comment of comments) {
-    const position = await findDiffPosition(comment, headSha);
+    const position = findDiffPosition(comment, filesMap);
     if (position) {
       reviewComments.push({
         path: comment.path,
@@ -125,12 +183,8 @@ async function postReviewComments() {
   }
 }
 
-async function findDiffPosition(comment, headSha) {
-  // Fetch diff
-  const diffData = await githubApi('GET', `/pulls/${prNumber}/files`);
-  if (diffData.status !== 200) return null;
-
-  const file = diffData.data.find(f => f.filename === comment.path);
+function findDiffPosition(comment, filesMap) {
+  const file = filesMap.get(comment.path);
   if (!file) return null;
 
   // Find position in patch
@@ -141,10 +195,11 @@ async function findDiffPosition(comment, headSha) {
     const line = patchLines[i];
     if (line.startsWith('@@')) {
       // Parse hunk header
-      const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
       if (match) {
         const startLine = parseInt(match[1]);
-        const endLine = startLine + (match[2] ? parseInt(match[2]) : 1);
+        const count = match[2] ? parseInt(match[2]) : 1;
+        const endLine = startLine + count;
         if (comment.line >= startLine && comment.line <= endLine) {
           position = { line: comment.line, side: 'RIGHT' };
           break;
@@ -160,3 +215,4 @@ postReviewComments().catch(err => {
   console.error('Error posting comments:', err);
   process.exit(1);
 });
+
