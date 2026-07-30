@@ -1,0 +1,34 @@
+---
+# 呼び出し側リポジトリ (dotfiles など) に配置するサンプルワークフロー。
+# このファイルを各リポジトリの .github/workflows/ocr-review.yml としてコピーして使う。
+#
+# 前提:
+#   - 呼び出し側リポジトリに Secrets OCR_LLM_URL / OCR_LLM_AUTH_TOKEN / OCR_LLM_MODEL を登録済みであること。
+#   - yohi/.github リポジトリの ocr-review.yml が workflow_call 対応版であること。
+
+name: OpenCodeReview
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  call-ocr-review:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/open-code-review') ||
+        startsWith(github.event.comment.body, '@open-code-review')))
+    uses: yohi/.github/.github/workflows/ocr-review.yml@master
+    secrets:
+      OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+      OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+      OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
