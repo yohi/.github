@@ -1,12 +1,12 @@
 # OpenCodeReview GitHub Actions セットアップガイド
 
-このリポジトリには、Alibaba 製 AI コードレビューツール **OpenCodeReview (OCR)** を GitHub Actions で実行するためのワークフローが含まれています。
+このリポジトリは `yohi` 配下の全リポジトリのデフォルト設定を管理する **dot-github リポジトリ** です。Alibaba 製 AI コードレビューツール **OpenCodeReview (OCR)** を **再利用ワークフロー (Reusable Workflow)** として提供しています。
 
 ## 概要
 
 OpenCodeReview は、PR の差分を LLM に送信してレビューコメントを生成する CLI ツールです。Claude Code などの汎用エージェントと比較してトークン消費が約 1/9 で、高精度なレビュー結果が得られます。
 
-このワークフローは以下のタイミングで OCR を実行します。
+このリポジトリのワークフロー自体がレビューを実行するのではなく、**dotfiles などの各リポジトリに配置した薄い呼び出しワークフローが `uses:` で呼び出す** 構成になっています。トリガー条件は呼び出し側で設定します:
 
 - PR が開かれたとき (`pull_request_target: opened`)
 - PR に新しいコミットがプッシュされたとき (`pull_request_target: synchronize`)
@@ -22,12 +22,41 @@ OpenCodeReview は、PR の差分を LLM に送信してレビューコメント
 - Git >= 2.41
 - Node.js >= 14 (ワークフロー内では Node 20 を使用)
 
-## セットアップ手順
+呼び出し側リポジトリ (dotfiles など) は以下のように設定します:
 
-### 1. リポジトリ Secrets の設定
+### 呼び出し側ワークフローの例
 
-**Settings → Secrets and variables → Actions** で以下の Secret を登録してください。
+各リポジトリの `.github/workflows/ocr-review.yml` として配置:
 
+```yaml
+name: OpenCodeReview
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+jobs:
+  call-ocr-review:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/open-code-review') ||
+        startsWith(github.event.comment.body, '@open-code-review')))
+    uses: yohi/.github/.github/workflows/ocr-review.yml@master
+    secrets:
+      OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+      OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+      OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
+```
+
+サンプルファイル: [`.github/workflows/caller-example.yml`](./.github/workflows/caller-example.yml)
+
+### 呼び出し側の Secrets 設定
+
+**Settings → Secrets and variables → Actions** で以下を登録してください (呼び出し元リポジトリごとに必要)。
 | Secret 名 | 必須 | 説明 | 例 |
 |---|---|---|---|
 | `OCR_LLM_URL` | ✅ | LLM API のエンドポイント URL | `https://api.openai.com/v1/chat/completions`<br>`https://api.anthropic.com/v1/messages` |
@@ -45,25 +74,29 @@ Anthropic Claude を使用する場合は、Variables で以下の変数を設�
 |---|---|---|
 | `OCR_LLM_USE_ANTHROPIC` | `true` または `false` | `true` にすると Anthropic プロトコルを使用。デフォルトは `false` (OpenAI 互換) |
 
-### 3. ワークフローファイルの配置
+### 中央管理ファイル (このリポジトリ)
 
-このリポジトリでは既に以下のファイルが配置されています。
+このリポジトリで管理されるファイル:
 
 ```
-.github/workflows/ocr-review.yml           # メインの OCR ワークフロー
-.github/workflows/scripts/post-ocr-comments.js  # レビューコメント投稿スクリプト
+.github/workflows/ocr-review.yml                  # Reusable Workflow (workflow_call)
+.github/workflows/caller-example.yml              # 呼び出し側のサンプル
+.github/workflows/scripts/post-ocr-comments.js    # コメント投稿スクリプト (Reusable から curl で取得)
 ```
 
-他リポジトリに導入する場合は、これらを同じパスにコピーしてください。
+### Secrets のスコープ
 
-### 4. ブランチ保護ルールの確認
+- **呼び出し側 (dotfiles 等)**: `OCR_LLM_URL` / `OCR_LLM_AUTH_TOKEN` / `OCR_LLM_MODEL` を登録
+- **このリポジトリ自体**: この `.github` リポジトリで PR を作成した場合に動作させたい場合のみ Secrets を登録
+
+### 3. ブランチ保護ルールの確認 (呼び出し側リポジトリ)
 
 マージをブロックする必要がある場合は、ブランチ保護ルールを手動で設定してください。
 
 1. **Settings → Branches → Add branch protection rule**
 2. Branch name pattern: `main` (または対象ブランチ)
 3. **Require status checks to pass before merging** にチェック
-4. ステータスチェック検索で `ocr-review` を選択して追加
+4. ステータスチェック検索で `call-ocr-review / ocr-review` を選択して追加
 
 > [!NOTE]
 > OCR 自体はコメントを投稿するだけでマージをブロックしません。ブロックしたい場合はブランチ保護ルールで対応してください。
@@ -107,32 +140,30 @@ ocr review --from main --to feature-branch
 
 ## カスタマイズ
 
-### バージョンの固定
-
-`.github/workflows/ocr-review.yml` のインストール行を変更してバージョンを固定できます。
+呼び出し側リポジトリのワークフローで `ocr-version` input を指定します。
 
 ```yaml
-# 変更前
-- run: npm install -g @alibaba-group/open-code-review@latest
-
-# 変更後 (例: v1.0.0 に固定)
-- run: npm install -g @alibaba-group/open-code-review@1.0.0
+jobs:
+  call-ocr-review:
+    uses: yohi/.github/.github/workflows/ocr-review.yml@master
+    with:
+      ocr-version: "1.0.0"
+    secrets:
+      OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+      OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+      OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
 ```
 
-### 並列数の調整
-
-大規模な PR やレート制限が厳しい場合は、`--concurrency` の値を変更してください。
+大規模な PR やレート制限が厳しい場合は、呼び出し側で `concurrency` input を変更してください。
 
 ```yaml
-# ocr-review.yml 内の該当行を変更
-ocr review \
-  --concurrency 3 \  # デフォルトは 5
-  ...
+    with:
+      concurrency: 3
 ```
 
 ### GitHub App での認証 (推奨オプション)
 
-デフォルトでは `GITHUB_TOKEN` を使用してコメントを投稿しますが、GitHub App を使用するとより厳格な権限管理が可能です。
+デフォルトでは呼び出し側の `secrets.GITHUB_TOKEN` を使用してコメントを投稿しますが、GitHub App を使用するとより厳格な権限管理が可能です。再利用ワークフロー内で `actions/create-github-app-token@v1` を使用する形にカスタマイズしてください。
 
 #### GitHub App の作成
 
