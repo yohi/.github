@@ -1,0 +1,12 @@
+{
+  "name": "github-auto-label-worker",
+  "version": "1.0.0",
+  "description": "GitHub App Webhook receiver to sync labels on repository creation",
+  "main": "index.js",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

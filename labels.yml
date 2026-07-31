@@ -1,0 +1,10 @@
+# 新規リポジトリ作成時に自動生成される GitHub イシュー/PR用ラベルの設定ファイル
+
+labels:
+  - name: "coderabbit:review"
+    color: "#FF5500"
+    description: "CodeRabbitによるレビュー対象"
+  - name: "greptile:review"
+    color: "#1AD894"
+    description: "Greptiletによるレビュー対象"
+
