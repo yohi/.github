@@ -323,28 +323,108 @@ OpenCodeReview の運用・展開方法には、本ドキュメントで解説�
 | **実行環境 / インフラ** | GitHub Actions (GitHub ランナー) | 外部サーバー (Cloud Run / AWS Lambda / 独自VPS など) |
 | **メンテナンス** | `yohi/.github` 側のワークフロー更新が全リポジトリに反映 | Webhook サーバー側のロジック更新が全リポジトリに反映 |
 
-### B. GitHub App 方式（Zero-YAML インストール）のアーキテクチャ概要
+### B. GitHub App 方式（Zero-YAML インストール / Cloudflare Workers 構成）
 
 各リポジトリ側に `.github/` や YAML ファイルを 1 行も置きたくない場合は、Webhook をトリガーとする GitHub App 構成を採用します。
+外部サーバーのホスティングコストをゼロにするため、**Cloudflare Workers (無料枠)** で Webhook を受信し、中央リポジトリ (`yohi/.github`) の GitHub Actions (無料枠) をトリガーするハイブリッド構成が推奨されます。
 
 ```mermaid
 graph TD
-    PR[Pull Request 作成/更新] -->|GitHub Webhook| AppServer[GitHub App Webhook サーバー]
+    PR[リポジトリで PR 作成 / 更新] -->|1. Webhook イベント| CF[Cloudflare Workers (GitHub App Backend)]
     
-    subgraph "External Server (Cloud Run / Lambda / VPS)"
-        AppServer -->|1. Webhook 受信| Auth[GitHub App Token 発行]
-        Auth -->|2. Diff 取得 & Checkout| Engine[OCR Engine (npx @alibaba-group/open-code-review)]
-        Engine -->|3. LLM API 呼び出し| LLM[LLM Provider (OpenAI/Anthropic/DeepSeek)]
-        Engine -->|4. レビュー結果パース| Poster[GitHub API Review Commenter]
+    subgraph "Cloudflare (無料枠)"
+        CF -->|2. Webhook 署名検証| Verify[署名 & イベントチェック]
+        Verify -->|3. App Token 発行| Auth[GitHub App 認証 (@octokit/auth-app)]
+        Auth -->|4. central repo へ dispatch| Dispatch[GitHub REST API (repository_dispatch)]
     end
 
-    Poster -->|5. Post Comments| PRComment[PR に直接インラインコメント投稿]
+    Dispatch -->|5. 共通 GitHub Actions 起動| Runner[yohi/.github の Actions ランナー]
+    
+    subgraph "GitHub Actions (無料枠)"
+        Runner -->|6. diff 取得 & ocr review 実行| Engine[OCR Engine (npx @alibaba-group/open-code-review)]
+        Engine -->|7. LLM API 呼び出し| LLM[LLM Provider (OpenAI/Anthropic)]
+        Engine -->|8. レビュー結果投稿| PRComment[PR に直接インラインコメント投稿]
+    end
 ```
 
-#### GitHub App 方式の構築ステップ:
-1. **GitHub App の作成**: GitHub Developer Settings で App を作成し、`Pull requests (Read/Write)` および `Contents (Read)` の権限と Webhook URL を設定。
-2. **Webhook サーバーのデプロイ**: Webhook を受信した際に `ocr review` を実行し、結果を GitHub API で PR コメントとして返却するマイクロサービスをデプロイ。
-3. **インストール**: レビューを行いたいリポジトリ（またはアカウント全体）に作成した App をインストール。これだけで、対象リポジトリで PR を作成すると自動的にレビューが動作します。
+#### 構築手順
+
+##### 1. GitHub App の作成
+1. **GitHub Developer Settings → GitHub Apps → New GitHub App**
+2. **Webhook**: Active にチェックを入れ、`Webhook URL` に Cloudflare Workers の URL を設定。`Webhook Secret` を設定。
+3. **Permissions**:
+   - `Pull requests`: Read & Write
+   - `Contents`: Read-only
+   - `Metadata`: Read-only
+4. **Subscribe to events**: `Pull request` にチェック。
+5. **Private Key** を生成・ダウンロード。`App ID` と `Installation ID` を手元に控える。
+
+##### 2. Cloudflare Workers (Webhook レシーバー) のデプロイ
+Cloudflare Workers 上で Webhook を受信し、中央管理リポジトリ (`yohi/.github`) の `repository_dispatch` イベントを呼び出すコードをデプロイします。
+
+```typescript
+import { createAppAuth } from "@octokit/auth-app";
+
+export default {
+  async fetch(request: Request, env: any) {
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+    
+    const payload = await request.json();
+    const action = payload.action;
+    
+    // PR 開設・更新時のみトリガー
+    if (action === "opened" || action === "synchronize" || action === "reopened") {
+      const repoOwner = payload.repository.owner.login;
+      const repoName = payload.repository.name;
+      const prNumber = payload.number;
+
+      // GitHub App Token を発行
+      const auth = createAppAuth({
+        appId: env.GITHUB_APP_ID,
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+      });
+      const { token } = await auth({
+        type: "installation",
+        installationId: payload.installation.id,
+      });
+
+      // 中央リポジトリの Actions (repository_dispatch) を起動
+      await fetch(`https://api.github.com/repos/yohi/.github/dispatches`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "Cloudflare-Worker-OCR-App",
+        },
+        body: JSON.stringify({
+          event_type: "open_code_review_trigger",
+          client_payload: {
+            target_repo: `${repoOwner}/${repoName}`,
+            pr_number: prNumber,
+            commit_sha: payload.pull_request.head.sha,
+            installation_id: payload.installation.id,
+          },
+        }),
+      });
+    }
+
+    return new Response("OK", { status: 200 });
+  },
+};
+```
+
+Secrets の登録:
+```bash
+npx wrangler secret put GITHUB_APP_ID
+npx wrangler secret put GITHUB_APP_PRIVATE_KEY
+npx wrangler secret put WEBHOOK_SECRET
+```
+
+##### 3. 中央管理リポジトリ (`yohi/.github`) 側の受信用 Actions
+中央管理リポジトリに `repository_dispatch` をトリガーとするワークフローを用意し、`ocr review` を実行させます。
+
+##### 4. App のインストール
+作成した GitHub App をレビュー対象にしたい任意のリポジトリ (または Organization / アカウント全体) にインストールします。対象リポジトリには YAML や設定ファイルを 1 つも置く必要がありません。
 
 ---
 
