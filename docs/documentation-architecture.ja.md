@@ -71,7 +71,6 @@ SPEC
 
 AGENTS
   -> AI Agent Behavior / Repository-specific Instructions
-
 docs/*
   -> Human-oriented Detailed Documentation
 
@@ -218,7 +217,7 @@ Quick Start の目的は、初見ユーザーを最小手順で最初の成功�
 
 Quick Start を完全な installation / deployment / migration / troubleshooting manual にしません。
 
-原則として明確な Quick Start は1つにします。OpenSandbox 等の特殊な開発フローは `Development` または専用ガイドへ置きます。
+原則として明確な Quick Start は1つにします。開発用サンドボックス等の特殊な開発フローは `Development` または専用ガイドへ置きます。
 
 ## 8. Reader Routing
 
@@ -827,7 +826,6 @@ SPEC
 
 AGENTS
     = agent behavior
-
 docs
     = human detailed documentation
 
