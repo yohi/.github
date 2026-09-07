@@ -71,6 +71,7 @@ SPEC
 
 AGENTS
   -> AI Agent Behavior / Repository-specific Instructions
+
 docs/*
   -> Human-oriented Detailed Documentation
 
@@ -826,6 +827,7 @@ SPEC
 
 AGENTS
     = agent behavior
+
 docs
     = human detailed documentation
 
