@@ -11,5 +11,6 @@
 
 ## ドキュメント
 
+- [Documentation Architecture Standard](./docs/documentation-architecture.md) / [日本語](./docs/documentation-architecture.ja.md) — `yohi/*` における README、SPEC、AGENTS、`docs/` の責務、命名、言語、SSOT の共通標準
 - [OpenCodeReview GitHub Actions セットアップガイド](./docs/OPEN_CODE_REVIEW_SETUP.md) — 呼び出し側の Secrets 設定、Reusable Workflow の `with:` パラメータ、トラブルシューティングなど
 
