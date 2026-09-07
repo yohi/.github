@@ -1,0 +1,12 @@
+version: 1
+
+# Add labels here to manage them across every repository accessible to the
+# yohi-label-sync GitHub App installation. Labels not listed here are kept.
+labels:
+  - name: "coderabbit:review"
+    color: "FF570A"
+    description: "Triggers an automated CodeRabbit review for this pull request."
+
+  - name: "ocr:review"
+    color: "2BDE5E"
+    description: "Triggers an automated Open Code Review (OCR) review for this pull request."
