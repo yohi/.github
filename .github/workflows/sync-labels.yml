@@ -1,0 +1,99 @@
+name: Sync repository labels
+
+on:
+  pull_request:
+    paths:
+      - .github/labels.yml
+      - .github/workflows/sync-labels.yml
+      - scripts/sync_labels.py
+      - tests/test_sync_labels.py
+      - requirements-label-sync.txt
+  push:
+    branches:
+      - master
+    paths:
+      - .github/labels.yml
+      - .github/workflows/sync-labels.yml
+      - scripts/sync_labels.py
+      - tests/test_sync_labels.py
+      - requirements-label-sync.txt
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Compute changes without writing labels
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "17 3 * * *"
+      timezone: "Asia/Tokyo"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-label-sync.txt
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-label-sync.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  sync:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: repository-label-sync
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-label-sync.txt
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-label-sync.txt
+
+      - name: Create GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.LABEL_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LABEL_SYNC_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-issues: write
+
+      - name: Synchronize labels
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        shell: bash
+        run: |
+          args=(--config .github/labels.yml)
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python scripts/sync_labels.py "${args[@]}"

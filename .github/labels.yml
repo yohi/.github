@@ -1,0 +1,5 @@
+version: 1
+
+# Add labels here to manage them across every repository accessible to the
+# yohi-label-sync GitHub App installation. Labels not listed here are kept.
+labels: []
