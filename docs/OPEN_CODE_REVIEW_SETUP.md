@@ -170,6 +170,7 @@ jobs:
 1. **Settings → Developer settings → GitHub Apps → New GitHub App**
 2. 以下の権限を付与:
    - Pull requests: Read & Write
+   - Issues: Read & Write
    - Contents: Read-only
    - Metadata: Read-only
 3. Private key を生成してダウンロード
@@ -183,16 +184,38 @@ jobs:
 | `GITHUB_APP_PRIVATE_KEY` | ダウンロードした Private key の内容 |
 | `GITHUB_APP_INSTALLATION_ID` | App をインストールしたリポジトリの Installation ID |
 
-#### ワークフローにトークン生成ステップを追加
+#### ワークフローへの追加設定
 
-本構成では呼び出し側 (caller workflow) は `uses:` で再利用ワークフローを呼び出すため、呼び出し側には `steps` を追加しません。GitHub App トークン生成と `secrets.GITHUB_TOKEN` の置換手順は、`steps` を定義している再利用ワークフロー (`.github/workflows/ocr-review.yml`) 側に配置してください。
+呼び出し側 (caller workflow) は `uses:` で再利用ワークフローを呼び出すため、GitHub App トークン生成と `secrets.GITHUB_TOKEN` の置換手順は再利用ワークフロー (`.github/workflows/ocr-review.yml`) 側に配置し、Secrets も引き渡す必要があります。
 
-##### 再利用ワークフロー (`.github/workflows/ocr-review.yml`) への設定
-ジョブの最初に以下のステップを追加します。
+##### 1. 再利用ワークフロー (`.github/workflows/ocr-review.yml`) 側の設定
+
+Secrets の受け取り宣言を追加します。
+
+```yaml
+on:
+  workflow_call:
+    secrets:
+      OCR_LLM_URL:
+        required: true
+      OCR_LLM_AUTH_TOKEN:
+        required: true
+      OCR_LLM_MODEL:
+        required: true
+      GITHUB_APP_ID:
+        required: false
+      GITHUB_APP_PRIVATE_KEY:
+        required: false
+      GITHUB_APP_INSTALLATION_ID:
+        required: false
+```
+
+ジョブの最初にトークン生成ステップを追加します。
 
 ```yaml
     steps:
       - name: Generate GitHub App token
+        if: ${{ secrets.GITHUB_APP_ID != '' }}
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
@@ -200,13 +223,32 @@ jobs:
           private-key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
           installation-id: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
           permission-pull-requests: write
+          permission-issues: write
           permission-contents: read
 ```
 
-その後、`ocr-review.yml` 内の `secrets.GITHUB_TOKEN` の使用箇所を `${{ steps.app-token.outputs.token }}` に置き換えてください。
+その後、`ocr-review.yml` 内の `GITHUB_TOKEN` の参照箇所を以下のように更新します。
 
-##### 呼び出し側ワークフロー
-呼び出し側ワークフローでは `steps` を追加せず、再利用ワークフロー呼び出し時に必要な App 情報 Secrets を渡すように設定します。
+```yaml
+      - name: Post review comments
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+```
+
+##### 2. 呼び出し側ワークフロー (`caller-example.yml` 等) 側の設定
+
+呼び出し側では Secret を再利用ワークフローへ引き渡すよう設定します。
+
+```yaml
+    secrets:
+      OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+      OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+      OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
+      GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+      GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+      GITHUB_APP_INSTALLATION_ID: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
+```
 
 ### カスタムレビュールール
 
@@ -248,11 +290,11 @@ ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
 
 **対処**: Secrets の `OCR_LLM_URL` と `OCR_LLM_AUTH_TOKEN` を再確認してください。ワークフロー実行時に `/tmp/ocr-stderr.log` にエラー詳細が記録されます。
 
-### コメントが間違った行に投稿される
+### コメントが特定の行に投稿されない・スキップされる
 
-**原因**: レビュー実行とコメント投稿の間で差分が変わった。
+**原因**: レビュー実行結果に含まれるファイル・行番号が、PR の Diff（変更差分）の範囲外にある場合。
 
-**対処**: 自動的に通常の Issue コメントにフォールバックします。PR を更新して再レビューしてください。
+**対処**: `post-ocr-comments.js` は PR の Diff 範囲内にある行のみにインラインコメントを投稿します。Diff 外へのコメントはスキップされます。必要に応じて PR を更新し、再度コメント (`/open-code-review`) でレビューを実行してください。
 
 ### `API error 403` (GitHub App 使用時)
 
@@ -269,9 +311,127 @@ ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
 
 **Actions → 該当ワークフロー → Artifacts** からダウンロードして内容を確認してください。
 
+## 導入モデルの比較: Reusable Workflow 方式 vs GitHub App 方式 (Zero-YAML)
+
+OpenCodeReview の運用・展開方法には、本ドキュメントで解説している **Reusable Workflow (再利用ワークフロー) 方式** に加えて、各リポジトリへのファイル配置を完全にゼロにする **GitHub App 方式** が存在します。
+
+| 比較項目 | A. Reusable Workflow 方式 (現行) | B. GitHub App 方式 (ゼロYAML構成) |
+| :--- | :--- | :--- |
+| **各リポジトリ側の設定** | **必要** (`.github/workflows/ocr-review.yml` のコピーが必要) | **不要**（リポジトリ側の YAML や設定ファイルは 0 行） |
+| **セットアップ体験** | 各リポジトリに呼び出し用 YAML をコミット | アプリを対象リポジトリ（または Org 全体）に「インストール」するだけ |
+| **Secrets の管理** | 各リポジトリ or Organization Secrets | Webhook サーバー（バックエンド）側で一元管理 |
+| **実行環境 / インフラ** | GitHub Actions (GitHub ランナー) | 外部サーバー (Cloud Run / AWS Lambda / 独自VPS など) |
+| **メンテナンス** | `yohi/.github` 側のワークフロー更新が全リポジトリに反映 | Webhook サーバー側のロジック更新が全リポジトリに反映 |
+
+### B. GitHub App 方式（Zero-YAML インストール / Cloudflare Workers 構成）
+
+各リポジトリ側に `.github/` や YAML ファイルを 1 行も置きたくない場合は、Webhook をトリガーとする GitHub App 構成を採用します。
+専用リポジトリ [yohi/ocr-app](https://github.com/yohi/ocr-app) を用意し、**Cloudflare Workers (無料枠)** で Webhook を受信して `yohi/ocr-app` の GitHub Actions (無料枠) をトリガーするハイブリッド構成が推奨されます。
+
+```mermaid
+graph TD
+    PR[リポジトリで PR 作成 / 更新] -->|1. Webhook イベント| CF[Cloudflare Workers (GitHub App Backend)]
+    
+    subgraph "Cloudflare (無料枠)"
+        CF -->|2. Webhook 署名検証| Verify[署名 & イベントチェック]
+        Verify -->|3. App Token 発行| Auth[GitHub App 認証 (@octokit/auth-app)]
+        Auth -->|4. ocr-repo へ dispatch| Dispatch[GitHub REST API (repository_dispatch)]
+    end
+
+    Dispatch -->|5. 共通 GitHub Actions 起動| Runner[yohi/ocr-app の Actions ランナー]
+    
+    subgraph "GitHub Actions (無料枠)"
+        Runner -->|6. diff 取得 & ocr review 実行| Engine[OCR Engine (npx @alibaba-group/open-code-review)]
+        Engine -->|7. LLM API 呼び出し| LLM[LLM Provider (OpenAI/Anthropic)]
+        Engine -->|8. レビュー結果投稿| PRComment[PR に直接インラインコメント投稿]
+    end
+```
+
+#### 構築手順
+
+##### 1. GitHub App の作成
+1. **GitHub Developer Settings → GitHub Apps → New GitHub App**
+2. **Webhook**: Active にチェックを入れ、`Webhook URL` に Cloudflare Workers の URL を設定。`Webhook Secret` を設定。
+3. **Permissions**:
+   - `Pull requests`: Read & Write
+   - `Contents`: Read-only
+   - `Metadata`: Read-only
+4. **Subscribe to events**: `Pull request` にチェック。
+5. **Private Key** を生成・ダウンロード。`App ID` と `Installation ID` を手元に控える。
+
+##### 2. Cloudflare Workers (Webhook レシーバー) のデプロイ
+Cloudflare Workers 上で Webhook を受信し、専用リポジトリ (`yohi/ocr-app`) の `repository_dispatch` イベントを呼び出すコードをデプロイします。
+
+```typescript
+import { createAppAuth } from "@octokit/auth-app";
+
+export default {
+  async fetch(request: Request, env: any) {
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+    
+    const payload = await request.json();
+    const action = payload.action;
+    
+    // PR 開設・更新時のみトリガー
+    if (action === "opened" || action === "synchronize" || action === "reopened") {
+      const repoOwner = payload.repository.owner.login;
+      const repoName = payload.repository.name;
+      const prNumber = payload.number;
+
+      // GitHub App Token を発行
+      const auth = createAppAuth({
+        appId: env.GITHUB_APP_ID,
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+      });
+      const { token } = await auth({
+        type: "installation",
+        installationId: payload.installation.id,
+      });
+
+      // 専用リポジトリ (yohi/ocr-app) の Actions (repository_dispatch) を起動
+      await fetch(`https://api.github.com/repos/yohi/ocr-app/dispatches`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "Cloudflare-Worker-OCR-App",
+        },
+        body: JSON.stringify({
+          event_type: "open_code_review_trigger",
+          client_payload: {
+            target_repo: `${repoOwner}/${repoName}`,
+            pr_number: prNumber,
+            commit_sha: payload.pull_request.head.sha,
+            installation_id: payload.installation.id,
+          },
+        }),
+      });
+    }
+
+    return new Response("OK", { status: 200 });
+  },
+};
+```
+
+Secrets の登録:
+```bash
+npx wrangler secret put GITHUB_APP_ID
+npx wrangler secret put GITHUB_APP_PRIVATE_KEY
+npx wrangler secret put WEBHOOK_SECRET
+```
+
+##### 3. 専用リポジトリ (`yohi/ocr-app`) 側の受信用 Actions
+`yohi/ocr-app` リポジトリに `repository_dispatch` をトリガーとするワークフローを用意し、`ocr review` を実行させます。
+
+##### 4. App のインストール
+作成した GitHub App をレビュー対象にしたい任意のリポジトリ (または Organization / アカウント全体) にインストールします。対象リポジトリには YAML や設定ファイルを 1 つも置く必要がありません。
+
+---
+
 ## 参考リンク
 
 - [OpenCodeReview GitHub リポジトリ](https://github.com/alibaba/open-code-review)
 - [OCR CI/CD ドキュメント](https://github.com/alibaba/open-code-review/blob/main/pages/src/content/docs/en/integrations/ci.md)
 - [OCR 設定ガイド](https://github.com/alibaba/open-code-review/blob/main/pages/src/content/docs/en/configuration.md)
 - [OCR CLI リファレンス](https://github.com/alibaba/open-code-review/blob/main/pages/src/content/docs/en/cli-reference.md)
+
